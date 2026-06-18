@@ -216,12 +216,16 @@ footer a {
 
 .patchTableWrapper {
   overflow-x: auto;
+  background-color: #f3f4f6;
+  border-radius: 8px;
+  padding: 12px;
 }
 
 .patchTable {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 16px;
+  background-color: #f8f9fb;
 }
 
 .patchTable th,
