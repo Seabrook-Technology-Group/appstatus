@@ -242,7 +242,8 @@ async function genAllReports() {
   const configLines = configText.split("\n");
   for (let ii = 0; ii < configLines.length; ii++) {
     const configLine = configLines[ii];
-    const [key, url] = configLine.split("=");
+    const [key, ...urlParts] = configLine.split("=");
+    const url = urlParts.join("=");
     if (!key || !url) {
       continue;
     }
