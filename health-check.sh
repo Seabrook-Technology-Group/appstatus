@@ -1,10 +1,13 @@
+#!/bin/bash
+set -e
+
+# Determine if we should commit changes
 # In the original repository we'll just print the result of status checks,
 # without committing. This avoids generating several commits that would make
 # later upstream merges messy for anyone who forked us.
 commit=true
 origin=$(git remote get-url origin)
-if [[ $origin == *statsig-io/statuspage* ]]
-then
+if [[ $origin == *statsig-io/statuspage* ]]; then
   commit=false
 fi
 
@@ -13,55 +16,101 @@ URLSARRAY=()
 
 urlsConfig="./urls.cfg"
 echo "Reading $urlsConfig"
-while read -r line
-do
-  echo "  $line"
-  IFS='=' read -ra TOKENS <<< "$line"
-  KEYSARRAY+=(${TOKENS[0]})
-  URLSARRAY+=(${TOKENS[1]})
+if [[ ! -f "$urlsConfig" ]]; then
+  echo "Error: $urlsConfig not found!"
+  exit 1
+fi
+
+while IFS='=' read -r key url; do
+  # Skip empty lines and comments
+  [[ -z "$key" || "$key" == \#* ]] && continue
+  # Trim whitespace
+  key=$(echo "$key" | xargs)
+  url=$(echo "$url" | xargs)
+  echo "  $key=$url"
+  KEYSARRAY+=("$key")
+  URLSARRAY+=("$url")
 done < "$urlsConfig"
 
 echo "***********************"
-echo "Starting health checks with ${#KEYSARRAY[@]} configs:"
+echo "Starting health checks with ${#KEYSARRAY[@]} configs at $(date)"
 
 mkdir -p logs
 
-for (( index=0; index < ${#KEYSARRAY[@]}; index++))
-do
+# Process each URL
+for (( index=0; index < ${#KEYSARRAY[@]}; index++ )); do
   key="${KEYSARRAY[index]}"
   url="${URLSARRAY[index]}"
-  echo "  $key=$url"
+  
+  # Sanitize key for filename (replace spaces with underscores, remove special chars)
+  sanitized_key=$(echo "$key" | tr ' ' '_' | sed 's/[^a-zA-Z0-9._-]//g')
+  log_file="logs/${sanitized_key}_report.log"
+  
+  echo ""
+  echo "Checking: $key"
+  echo "URL: $url"
+  echo "Log file: $log_file"
 
-  for i in 1 2 3 4; 
-  do
-    response=$(curl --write-out '%{http_code}' --silent --output /dev/null $url)
-    if [ "$response" -eq 200 ] || [ "$response" -eq 202 ] || [ "$response" -eq 301 ] || [ "$response" -eq 302 ] || [ "$response" -eq 307 ]; then
+  result="failed"
+  response_code="000"
+  
+  # Try up to 4 times with 5-second delays between attempts
+  for attempt in 1 2 3 4; do
+    echo -n "  Attempt $attempt/4... "
+    
+    # Use timeout to prevent hanging requests (max 10 seconds)
+    response_code=$(curl -w '%{http_code}' --silent --output /dev/null --max-time 10 --connect-timeout 5 "$url" 2>/dev/null || echo "000")
+    
+    # Success if 2xx, 3xx status codes (or some 4xx like 401 for auth-protected endpoints)
+    if [[ "$response_code" == "200" || "$response_code" == "202" || "$response_code" == "301" || "$response_code" == "302" || "$response_code" == "307" || "$response_code" == "401" || "$response_code" == "403" ]]; then
       result="success"
-    else
-      result="failed"
-    fi
-    if [ "$result" = "success" ]; then
+      echo "✓ (HTTP $response_code)"
       break
+    else
+      echo "✗ (HTTP $response_code)"
+      if [[ $attempt -lt 4 ]]; then
+        sleep 5
+      fi
     fi
-    sleep 5
   done
+  
   dateTime=$(date +'%Y-%m-%d %H:%M')
-  if [[ $commit == true ]]
-  then
-    echo $dateTime, $result >> "logs/${key}_report.log"
-    # By default we keep 2000 last log entries.  Feel free to modify this to meet your needs.
-    echo "$(tail -2000 logs/${key}_report.log)" > "logs/${key}_report.log"
+  
+  if [[ $commit == true ]]; then
+    # Append result to log file
+    echo "$dateTime, $result" >> "$log_file"
+    
+    # Keep only the last 2000 entries to prevent log file bloat
+    tail -2000 "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
+    
+    echo "  Result: $result - logged to $log_file"
   else
-    echo "    $dateTime, $result"
+    echo "  Result: $result (not committing)"
   fi
 done
 
-if [[ $commit == true ]]
-then
-  # Let's make Vijaye the most productive person on GitHub.
-  git config --global user.name 'Vijaye Raji'
-  git config --global user.email 'vijaye@statsig.com'
+echo ""
+echo "Health checks completed at $(date)"
+
+# Commit and push changes if in a real repository
+if [[ $commit == true ]]; then
+  echo "***********************"
+  echo "Committing changes to Git..."
+  
+  # Configure git user for CI/CD environments (GitHub Actions)
+  git config --global user.name 'Automated Health Check'
+  git config --global user.email 'francis.delgado@connectedmanufacturing.com'
+  
+  # Stage and commit log files
   git add -A --force logs/
-  git commit -am '[Automated] Update Health Check Logs'
-  git push
+  
+  if git diff --cached --quiet; then
+    echo "No changes to commit"
+  else
+    git commit -m "[Automated] Update Health Check Logs - $(date +'%Y-%m-%d %H:%M:%S')"
+    git push
+    echo "Changes pushed successfully"
+  fi
 fi
+
+echo "Done!"
