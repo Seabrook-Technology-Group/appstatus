@@ -167,6 +167,14 @@ footer a {
 
 .sectionUrl {
   font-size: 14px;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+
+.sectionUrl a {
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 .statusTitle {
